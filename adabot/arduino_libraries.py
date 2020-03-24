@@ -25,7 +25,10 @@ import argparse
 import traceback
 
 import requests
-
+import csv
+import base64
+import re
+import json
 from adabot import github_requests as github
 
 # Setup ArgumentParser
@@ -33,6 +36,7 @@ cmd_line_parser = argparse.ArgumentParser(description="Adabot utility for Arduin
                                           prog="Adabot Arduino Libraries Utility")
 cmd_line_parser.add_argument("-o", "--output_file", help="Output log to the filename provided.",
                              metavar="<OUTPUT FILENAME>", dest="output_file")
+cmd_line_parser.add_argument("-a", "--check-actions", help="Check the libraries for a GitHub Actions configuration.", dest="check_actions", action='store_true')
 cmd_line_parser.add_argument("-v", "--verbose", help="Set the level of verbosity printed to the command prompt."
                              " Zero is off; One is on (default).", type=int, default=1, dest="verbose", choices=[0,1])
 output_filename = None
@@ -42,6 +46,8 @@ file_data = []
 all_libraries = []
 adafruit_library_index = []
 
+products_list = json.loads(open('products.json', 'r').read())
+products_dict = { prod['product_id'] : prod for prod in products_list}
 def list_repos():
     """ Return a list of all Adafruit repositories with 'Arduino' in either the
         name, description, or readme. Each list item is a dictionary of GitHub API
@@ -112,7 +118,7 @@ def validate_library_properties(repo):
     if not lib_prop_file.ok:
         #print("{} skipped".format(repo["name"]))
         return None # no library properties file!
-    
+
     lines = lib_prop_file.text.split("\n")
     for line in lines:
         if "version" in line:
@@ -166,6 +172,69 @@ def validate_travis(repo):
     repo_has_travis = requests.get("https://raw.githubusercontent.com/adafruit/" + repo["name"] + "/master/.travis.yml")
     return repo_has_travis.ok
 
+def validate_actions(repo):
+    """Validate if a repo has .travis.yml.
+    """
+    repo_has_actions = requests.get("https://raw.githubusercontent.com/adafruit/" + repo["name"] + "/master/.github/workflows/githubci.yml")
+    return repo_has_actions.ok
+
+def check_repos_for_actions(csv_filename='arduino_actions.csv'):
+    import time
+    repo_list = list_repos()
+    with open(csv_filename, 'w', newline='') as csvfile:
+        fieldnames = ['repo_name', 'repo_url', 'has_actions', 'has_travis', 'pids', 'all_pids_discontinued']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for repo in repo_list[0:10]:
+            lib_check = validate_library_properties(repo)
+            repo_name = str(repo['name'])
+            html_url = str(repo['html_url'])
+            if lib_check is None: continue
+            pids = extract_pids_from_readme(repo)
+
+            has_travis = validate_travis(repo)
+            has_actions = validate_actions(repo)
+            pids_discontinued = check_pids(pids)
+            writer.writerow({
+                'repo_name': repo_name,
+                'repo_url':  html_url,
+                'has_actions':has_actions,
+                'has_travis':has_travis,
+                'pids': pids,
+                'all_pids_discontinued': pids_discontinued
+                }
+            )
+
+
+def check_pids(pids):
+    for pid in pids:
+        try:
+            print(pid, products_dict[pid])
+        except KeyError:
+            print("Bad PID", pid, "skipping")
+            continue
+    return all( (products_dict[pid]['discontinue_status'] == 'Discontinued') for pid in pids)
+
+def get_readme_contents(repo):
+    # GET /repos/:owner/:repo/contents/:path
+    readme_contents = github.get("/repos/adafruit/" + repo["name"] + "/contents/README.md")
+    if not readme_contents.ok:
+        return
+
+    return readme_contents.json()
+
+def extract_pids_from_readme(repo):
+    pids = []
+    readme_contents = get_readme_contents(repo)
+    if readme_contents is not None: return pids
+    if readme_contents['encoding'] != 'base64': return pids
+    content = str(base64.b64decode(readme_contents['content']))
+    pid_matches = re.finditer('adafruit\.com\/product(?:s)\/(\d+)?', content)
+    for pm in pid_matches:
+        pid = pm.group(1)
+        pids.append(pid)
+    return pids
+
 def validate_example(repo):
     """Validate if a repo has any files in examples directory
     """
@@ -202,7 +271,7 @@ def run_arduino_lib_checks():
         for lib in adafruit_library_index:
             if (repo['clone_url'] == lib['repository']) or (repo['html_url'] == lib['website']):
                 entry['arduino_version'] = lib['version'] # found it!
-                break            
+                break
         else:
             needs_registration = True
         if needs_registration:
@@ -225,7 +294,7 @@ def run_arduino_lib_checks():
         all_libraries.append(entry)
 
     for entry in all_libraries:
-        print(entry)            
+        print(entry)
 
     if len(failed_lib_prop) > 2:
         print_list_output("Libraries Have Mismatched Release Tag and library.properties Version: ({})", failed_lib_prop)
@@ -257,7 +326,10 @@ if __name__ == "__main__":
         for lib in arduino_library_index['libraries']:
             if 'adafruit' in lib['url']:
                 adafruit_library_index.append(lib)
-        run_arduino_lib_checks()
+        if cmd_line_args.check_actions:
+            check_repos_for_actions()
+        else:
+            run_arduino_lib_checks()
     except:
         if output_filename is not None:
             exc_type, exc_val, exc_tb = sys.exc_info()
