@@ -185,7 +185,7 @@ def check_repos_for_actions(csv_filename='arduino_actions.csv'):
         fieldnames = ['repo_name', 'repo_url', 'has_actions', 'has_travis', 'pids', 'all_pids_discontinued']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
-        for repo in repo_list[0:10]:
+        for repo in repo_list:
             lib_check = validate_library_properties(repo)
             repo_name = str(repo['name'])
             html_url = str(repo['html_url'])
