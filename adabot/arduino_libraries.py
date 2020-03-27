@@ -36,7 +36,7 @@ cmd_line_parser = argparse.ArgumentParser(description="Adabot utility for Arduin
                                           prog="Adabot Arduino Libraries Utility")
 cmd_line_parser.add_argument("-o", "--output_file", help="Output log to the filename provided.",
                              metavar="<OUTPUT FILENAME>", dest="output_file")
-cmd_line_parser.add_argument("-a", "--check-actions", help="Check the libraries for a GitHub Actions configuration.", dest="check_actions", action='store_true')
+cmd_line_parser.add_argument("-a", "--check-actions", help="Check the libraries for a GitHub Actions configuration.", dest="check_actions")
 cmd_line_parser.add_argument("-v", "--verbose", help="Set the level of verbosity printed to the command prompt."
                              " Zero is off; One is on (default).", type=int, default=1, dest="verbose", choices=[0,1])
 output_filename = None
@@ -181,7 +181,7 @@ def validate_actions(repo):
 def check_repos_for_actions(csv_filename='arduino_actions.csv'):
     import time
     repo_list = list_repos()
-    with open(csv_filename, 'w', newline='') as csvfile:
+    with open(csv_filename, 'r', newline='') as csvfile:
         fieldnames = ['repo_name', 'repo_url', 'has_actions', 'has_travis', 'pids', 'all_pids_discontinued']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
@@ -224,12 +224,12 @@ def get_readme_contents(repo):
     return readme_contents.json()
 
 def extract_pids_from_readme(repo):
-    pids = []
     readme_contents = get_readme_contents(repo)
-    if readme_contents is not None: return pids
-    if readme_contents['encoding'] != 'base64': return pids
+    if readme_contents is None: return
+    if readme_contents['encoding'] != 'base64': return
     content = str(base64.b64decode(readme_contents['content']))
     pid_matches = re.finditer('adafruit\.com\/product(?:s)\/(\d+)?', content)
+    pids = []
     for pm in pid_matches:
         pid = pm.group(1)
         pids.append(pid)
@@ -326,7 +326,7 @@ if __name__ == "__main__":
         for lib in arduino_library_index['libraries']:
             if 'adafruit' in lib['url']:
                 adafruit_library_index.append(lib)
-        if cmd_line_args.check_actions:
+        if cmd_line_arg.check_actions:
             check_repos_for_actions()
         else:
             run_arduino_lib_checks()
